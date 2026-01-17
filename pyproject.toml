@@ -1,0 +1,318 @@
+[project]
+name = "gptmarket_generator"
+version = "0.1.0"
+description = "Temporal-based media generation service with scalable workers"
+readme = "README.md"
+requires-python = ">=3.12"
+
+dependencies = [
+  "pydantic>=2.11.1,<2.12.0",
+  "pydantic-settings>=2.10.1,<2.11.0",
+  "structlog>=24.4.0",
+  "httpx>=0.27.2",
+  "aiobotocore>=2.13.0",
+  "replicate>=1.0.7",
+  "openai>=1.59.0",
+  "litellm>=1.56.0",
+  # Temporal for workflow orchestration
+  "temporalio>=1.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.8.0",
+  "mypy>=1.13.0",
+  "pytest>=8.3.2",
+  "coverage>=7.6.1",
+  "pytest-dotenv>=0.5.2",
+  "pytest-asyncio>=0.23.8",
+  "faker>=27.0.0",
+  "factory-boy>=3.3.1",
+  "freezegun>=1.5.1",
+  "cerberus>=1.3.5",
+]
+
+# =============================================================================
+# Ruff - Strict linting and formatting
+# =============================================================================
+[tool.ruff]
+target-version = "py312"
+exclude = [".venv", "migrations", "__pycache__"]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    # Core
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    
+    # Best practices
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "SIM",    # flake8-simplify
+    "PIE",    # flake8-pie
+    "RUF",    # Ruff-specific rules
+    
+    # Type annotations
+    "ANN",    # flake8-annotations
+    "TCH",    # flake8-type-checking
+    
+    # Security
+    "S",      # flake8-bandit (security)
+    
+    # Code quality
+    "N",      # pep8-naming
+    "PT",     # flake8-pytest-style
+    "RET",    # flake8-return
+    "ARG",    # flake8-unused-arguments
+    "PTH",    # flake8-use-pathlib
+    "ERA",    # eradicate (commented-out code)
+    "PL",     # pylint
+    "TRY",    # tryceratops (exception handling)
+    "PERF",   # perflint (performance)
+    "FURB",   # refurb (modern Python)
+    
+    # Documentation
+    "D",      # pydocstyle
+    
+    # Async
+    "ASYNC",  # flake8-async
+]
+
+ignore = [
+    # Line length - handled by formatter
+    "E501",
+    
+    # Allow function calls in defaults
+    "B008",
+    
+    # Allow exceptions without `from`
+    "B904",
+    
+    # Docstrings - be less strict
+    "D100",   # Missing docstring in public module
+    "D104",   # Missing docstring in public package
+    "D105",   # Missing docstring in magic method
+    "D107",   # Missing docstring in __init__
+    "D203",   # 1 blank line required before class docstring (conflicts with D211)
+    "D213",   # Multi-line docstring summary should start at the second line (conflicts with D212)
+    
+    # Type annotations - allow some flexibility
+    "ANN001", # Missing type annotation for function argument
+    "ANN002", # Missing type annotation for *args
+    "ANN003", # Missing type annotation for **kwargs
+    "ANN201", # Missing return type annotation for public function
+    "ANN202", # Missing return type for private functions
+    "ANN204", # Missing return type for special methods (__init__, etc.)
+    "ANN205", # Missing return type for static method
+    "ANN401", # Dynamically typed expressions (Any) are disallowed
+    
+    # Docstrings - allow missing in existing codebase
+    "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107",
+    "D200", # One-line docstring should fit on one line
+    "D205", # 1 blank line required between summary line and description
+    "D212", # Multi-line docstring summary should start at the first line
+    "D400", # First line should end with a period
+    "D401", # First line should be in imperative mood
+    "D415", # First line should end with a period, question mark, or exclamation point
+    
+    # RUF - allow some Ruff specific
+    "RUF012", # Mutable class attributes (pydantic handles this)
+    "RUF022", # __all__ is not sorted (we want semantic grouping)
+    
+    # ERA - allow commented code during development
+    "ERA001", # Found commented-out code
+    
+    # Security - allow some patterns
+    "S324", # Use of insecure hash functions
+    "S110", # try-except-pass detected
+    
+    # Async - allow some patterns
+    "ASYNC109", # Async function with timeout parameter
+    "ASYNC110", # Use asyncio.Event instead of sleep loop
+    "ASYNC230", # Async functions should not open files with blocking methods
+    
+    # Performance/simplification - just suggestions
+    "SIM105", # Use contextlib.suppress
+    "PERF401", # Use list comprehension
+    "FURB162", # Unnecessary timezone replacement
+    
+    # Naming
+    "N818", # Exception name should be named with Error suffix
+    
+    # Arguments - allow unused in some cases
+    "ARG002", # Unused method argument
+    "ARG004", # Unused static method argument
+    
+    # Path - don't force pathlib
+    "PTH123", # open() should be replaced by Path.open()
+    
+    # Ambiguous characters (× is intentional in resolution strings)
+    "RUF001", # Ambiguous unicode character
+    "RUF002", # Ambiguous unicode in docstring
+    
+    # pyupgrade - keep Generic[T] for Pydantic models  
+    "UP046", # Generic uses Generic subclass instead of type parameters
+    
+    # Security - allow some patterns
+    "S101",   # Use of assert (allowed in tests)
+    "S104",   # Possible binding to all interfaces
+    "S105",   # Possible hardcoded password (false positives)
+    "S106",   # Possible hardcoded password (false positives)
+    
+    # Pylint - allow some flexibility
+    "PLR0913", # Too many arguments
+    "PLR2004", # Magic value used in comparison
+    "PLR0911", # Too many return statements
+    "PLR0912", # Too many branches
+    "PLR0915", # Too many statements
+    
+    # Try/except - allow some flexibility
+    "TRY002", # Create your own exception
+    "TRY003", # Avoid specifying long messages outside exception class
+    "TRY004", # Prefer TypeError for invalid type
+    "TRY300", # Consider moving to else block
+    "TRY301", # Abstract raise to an inner function
+    
+    # Return - less strict
+    "RET504", # Unnecessary assignment before return
+    
+    # Naming - allow single letter names in some cases
+    "N806",   # Variable in function should be lowercase
+    
+    # Pylint - allow imports inside functions for lazy loading
+    "PLC0415", # import should be at top-level
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",   # Allow assert in tests
+    "ARG",    # Allow unused arguments (fixtures)
+    "ANN",    # Don't require annotations in tests
+    "D",      # Don't require docstrings in tests
+    "PLR2004", # Allow magic values in tests
+    "PT018",  # Assertion should be broken down
+    "PLE1205", # Too many arguments for logging
+]
+"migrations/**/*.py" = [
+    "D",      # No docstrings required
+    "ANN",    # No annotations required
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+force-single-line = false
+combine-as-imports = true
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+
+# =============================================================================
+# Mypy - Type checking (practical strictness)
+# =============================================================================
+[tool.mypy]
+python_version = "3.12"
+exclude = [".venv", "migrations", "__pycache__", "tests"]
+
+# Enable Pydantic plugin for better type inference
+plugins = ["pydantic.mypy"]
+
+# Core checks (not full strict mode - too aggressive for existing codebase)
+warn_unused_configs = true
+warn_redundant_casts = true
+no_implicit_optional = true
+strict_equality = true
+
+# Allow some flexibility
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+warn_return_any = false
+disallow_untyped_decorators = false
+
+# Error output
+show_error_codes = true
+show_column_numbers = true
+pretty = true
+
+# Third-party library handling
+ignore_missing_imports = true
+
+# Pydantic mypy plugin config
+[tool.pydantic-mypy]
+init_forbid_extra = false
+init_typed = false
+warn_required_dynamic_aliases = false
+
+# Per-module overrides
+[[tool.mypy.overrides]]
+module = [
+    "replicate.*",
+    "structlog.*",
+    "aiobotocore.*",
+    "temporalio.*",
+    "litellm.*",
+]
+ignore_missing_imports = true
+
+# =============================================================================
+# Pytest
+# =============================================================================
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra --strict-markers -m 'not manual'"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+env_override_existing_values = 1
+env_files = [".test.env"]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning",
+]
+markers = [
+    "manual: Tests that run against real services (Temporal, APIs). Run with: pytest -m manual",
+    "slow: Slow tests that take more than a few seconds",
+]
+
+# =============================================================================
+# Coverage
+# =============================================================================
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/migrations/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "@abstractmethod",
+]
+fail_under = 80
+show_missing = true
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "ruff>=0.14.10",
+]

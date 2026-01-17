@@ -1,0 +1,77 @@
+import logging.config
+from pathlib import Path
+
+import structlog
+
+from app.core.configs import app_config
+
+# Project root is where pyproject.toml lives
+PROJECT_ROOT = Path(__file__).resolve()
+while PROJECT_ROOT.parent != PROJECT_ROOT:
+    if (PROJECT_ROOT / 'pyproject.toml').exists():
+        break
+    PROJECT_ROOT = PROJECT_ROOT.parent
+
+LOG_DIR = PROJECT_ROOT / 'logs'
+
+# Create logs directory only if file logging is enabled
+if 'file' in app_config.LOG_HANDLERS:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+logging.config.dictConfig(
+    {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'plain': {
+                '()': 'logging.Formatter',
+                'fmt': '[%(asctime)s] %(levelname)-8s: %(message)s',
+                'datefmt': '%Y-%m-%d %H:%M:%S',
+            },
+            'json': {
+                '()': structlog.stdlib.ProcessorFormatter,
+                'processors': [structlog.processors.dict_tracebacks, structlog.processors.JSONRenderer()],
+            },
+        },
+        'handlers': {
+            'stream': {
+                'formatter': 'plain',
+                'class': 'logging.StreamHandler',
+                'stream': 'ext://sys.stderr',
+            },
+            'file': {
+                'formatter': 'plain',
+                'class': 'logging.handlers.TimedRotatingFileHandler',
+                'filename': str(LOG_DIR / 'app.log'),
+                'when': 'midnight',
+                'utc': True,
+                'delay': True,
+                'backupCount': 7,
+            },
+        },
+        'loggers': {
+            'main': {'handlers': app_config.LOG_HANDLERS, 'level': app_config.LOG_LEVEL},
+        },
+    }
+)
+
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.CallsiteParameterAdder(
+            [
+                structlog.processors.CallsiteParameter.FILENAME,
+                structlog.processors.CallsiteParameter.LINENO,
+                structlog.processors.CallsiteParameter.FUNC_NAME,
+            ]
+        ),
+        structlog.processors.TimeStamper(fmt='iso'),
+        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+    ],
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+
+logger = structlog.get_logger('main')

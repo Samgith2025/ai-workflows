@@ -1,0 +1,339 @@
+# GPTMarket Generator - Cursor Rules
+
+## Project Overview
+
+Temporal-based media generation service with AI models defined as Pydantic schemas. No REST API - workflows are triggered via Temporal client directly.
+
+## Technology Stack
+
+- **Python 3.12+** with `uv` package manager
+- **Temporal** for workflow orchestration
+- **Pydantic** for schemas and configuration
+- **Replicate/RunPod/Modal** as AI providers
+- **S3** for storage
+
+## Code Style
+
+- Single quotes for strings
+- Google-style docstrings
+- 120 char line length
+- Use `ruff` for linting/formatting
+- Use Pydantic `BaseModel` for all schemas (never dataclasses)
+
+## Key Patterns
+
+### 1. Configuration - Always Use `app_config`
+
+Never use `os.getenv()`. Always import from config:
+
+```python
+from app.core.configs import app_config
+
+# Correct
+api_key = app_config.OPENAI_API_KEY
+
+# Wrong - never do this
+api_key = os.getenv('OPENAI_API_KEY')
+```
+
+### 2. AI Models - One Model Per File
+
+Each AI model gets its own module in `app/core/ai_models/{category}/`:
+
+```
+app/core/ai_models/
+├── image/
+│   ├── __init__.py
+│   ├── common.py           # Shared enums
+│   ├── flux_schnell.py
+│   └── hidream.py
+└── video/
+    ├── __init__.py
+    ├── common.py           # AspectRatio, etc.
+    └── seedance.py
+```
+
+Model structure:
+
+```python
+# app/core/ai_models/video/my_model.py
+from pydantic import Field
+from app.core.ai_models.base import (
+    ModelCapability, ModelCategory, ModelDefinition, 
+    ModelInput, Provider, ProviderConfig,
+)
+from app.core.ai_models.registry import model_registry
+
+
+class MyModelInput(ModelInput):
+    """Input schema for the model."""
+    
+    prompt: str = Field(..., description='Text prompt')
+    duration: int = Field(5, ge=2, le=12, description='Duration in seconds')
+    
+    def to_replicate(self) -> dict[str, Any]:
+        return {'prompt': self.prompt, 'duration': self.duration}
+
+
+class MyModelDefinition(ModelDefinition):
+    input_class = MyModelInput
+
+
+MyModel = MyModelDefinition(
+    id='my-model',
+    name='My Model',
+    category=ModelCategory.VIDEO,
+    capabilities=[ModelCapability.TEXT_TO_VIDEO],
+    description='Model description',
+    author='Author',
+    avg_generation_time_seconds=60.0,
+    provider_configs={
+        Provider.REPLICATE: ProviderConfig(
+            provider=Provider.REPLICATE,
+            model_id='author/model-name',
+        ),
+    },
+)
+
+model_registry.register(MyModel)
+```
+
+### 3. Generation Workflows - One Per Type
+
+Each generation type (Ruby, SaaS Showcase, Animation, etc.) has its own workflow file.
+Workflows are **auto-discovered** - no need to edit any registry.
+
+```
+app/temporal/workflows/generations/
+├── __init__.py           # Auto-discovers workflows
+├── ruby.py               # RubyWorkflow -> 'ruby'
+├── saas_showcase.py      # SaaSShowcaseWorkflow -> 'saas_showcase'
+└── animation.py          # AnimationWorkflow -> 'animation'
+```
+
+Workflow structure:
+
+```python
+# app/temporal/workflows/generations/my_generation.py
+from pydantic import BaseModel, Field
+from temporalio import workflow
+
+# Activity imports must use pass_through to avoid sandbox restrictions
+with workflow.unsafe.imports_passed_through():
+    from app.temporal.activities import generate_image, generate_video
+
+from app.temporal.schemas import WorkflowInput, WorkflowStatus
+from app.temporal.workflows.base import SLOW_RETRY, WorkflowContext, run_activity, upload_output
+
+
+class MyGenerationInput(WorkflowInput):
+    """Input from frontend. MUST inherit from WorkflowInput for auth support."""
+    
+    topic: str = Field(..., description='Topic description')
+    style: str = Field('default', description='Style option')
+
+
+class MyGenerationOutput(BaseModel):
+    """Output to frontend."""
+    
+    video_url: str = Field(..., description='Final video URL')
+
+
+@workflow.defn
+class MyGenerationWorkflow:
+    """Creates my generation type."""
+
+    def __init__(self) -> None:
+        self._ctx = WorkflowContext()
+
+    @workflow.query
+    def get_status(self) -> WorkflowStatus:
+        return self._ctx.status
+
+    @workflow.query
+    def get_current_step(self):
+        return self._ctx.current_step
+
+    @workflow.run
+    async def run(self, input: MyGenerationInput) -> MyGenerationOutput:
+        self._ctx.start(input)  # Validates secret_key if auth enabled
+
+        async with self._ctx.step('image', 'Generate Image', 10):
+            image = await run_activity(generate_image, {...}, timeout_minutes=5)
+
+        async with self._ctx.step('video', 'Generate Video', 50):
+            video = await run_activity(generate_video, {...}, timeout_minutes=10)
+
+        async with self._ctx.step('upload', 'Upload', 90):
+            url = await upload_output(video.output_url, 'videos')
+
+        self._ctx.complete()
+        return MyGenerationOutput(video_url=url)
+```
+
+**Key points:**
+- **All workflow inputs MUST inherit from `WorkflowInput`** (provides `secret_key` field)
+- **Always pass input to `self._ctx.start(input)`** to validate authentication
+- Use `async with self._ctx.step(id, name, progress)` for step lifecycle
+- Steps auto-complete on exit, auto-fail on exception (no try/except needed)
+- Workflow is auto-discovered as `'my_generation'` (from class name)
+
+### Workflow Authentication
+
+Workflows are protected via secret key authentication at the workflow level:
+
+```python
+# When WORKFLOW_SECRET_ENABLED=True (production), clients must include secret_key:
+await client.start_workflow(
+    MyWorkflow.run,
+    MyGenerationInput(
+        secret_key='your-secret-key',  # Required in production
+        topic='...',
+    ),
+    id=workflow_id,
+    task_queue='generation-queue',
+)
+```
+
+**Environment variables:**
+- `WORKFLOW_SECRET_ENABLED`: Set to `true` in production
+- `WORKFLOW_SECRET_KEY`: The secret key (set same value on server and client)
+
+### 4. Temporal Activities
+
+Activities are async functions decorated with `@activity.defn`:
+
+```python
+# app/temporal/activities/my_activity.py
+from pydantic import BaseModel, Field
+from temporalio import activity
+
+from app.core.services.my_service import get_my_service
+
+
+class MyActivityInput(BaseModel):
+    data: str = Field(..., description='Input data')
+
+
+class MyActivityOutput(BaseModel):
+    result: str = Field(..., description='Output result')
+
+
+@activity.defn
+async def my_activity(input: MyActivityInput) -> MyActivityOutput:
+    """Activity description."""
+    activity.logger.info(f'Processing: {input.data}')
+    
+    service = get_my_service()
+    try:
+        result = await service.do_something(input)
+        return MyActivityOutput(result=result)
+    finally:
+        await service.close()
+```
+
+Add to `app/temporal/activities/__init__.py` for export.
+
+### 5. Schemas - Use Pydantic
+
+All data contracts use Pydantic BaseModel with Field descriptions:
+
+```python
+from pydantic import BaseModel, Field
+
+
+class MyInput(BaseModel):
+    """Input description."""
+    
+    required_field: str = Field(..., description='This field is required')
+    optional_field: int = Field(10, description='Has default value')
+    nullable_field: str | None = Field(None, description='Can be null')
+```
+
+### 6. Aspect Ratios - Use `AspectRatio` Enum
+
+Always use the `AspectRatio` enum for aspect ratio fields:
+
+```python
+from app.core.ai_models.common import AspectRatio
+
+# In Pydantic models
+aspect_ratio: AspectRatio = Field(AspectRatio.PORTRAIT_9_16, description='Aspect ratio')
+
+# Comparing values
+if ratio_string == AspectRatio.PORTRAIT_9_16.value:  # '9:16'
+    ...
+
+# Available values:
+# PORTRAIT_9_16 = '9:16'   - TikTok, Reels, Shorts
+# PORTRAIT_9_21 = '9:21'   - Ultra tall
+# PORTRAIT_3_4 = '3:4'     - Traditional portrait
+# PORTRAIT_2_3 = '2:3'     - Photo portrait
+# LANDSCAPE_16_9 = '16:9'  - YouTube, TV, widescreen
+# LANDSCAPE_21_9 = '21:9'  - Cinematic ultrawide
+# LANDSCAPE_4_3 = '4:3'    - Traditional TV
+# LANDSCAPE_3_2 = '3:2'    - Photo landscape
+# SQUARE = '1:1'           - Instagram feed
+```
+
+## File Organization
+
+```
+app/
+├── core/
+│   ├── ai_models/          # AI model definitions
+│   │   ├── base.py         # Base types
+│   │   ├── registry.py     # Model registry
+│   │   ├── image/          # Image models (one file per model)
+│   │   └── video/          # Video models (one file per model)
+│   ├── configs/            # Pydantic Settings
+│   ├── providers/          # External API clients (Replicate, etc.)
+│   └── services/           # Business logic services
+└── temporal/
+    ├── activities/         # Temporal activities
+    │   ├── ffmpeg.py       # Video processing (slow_down, text_overlay)
+    │   ├── image.py        # Image generation
+    │   ├── video.py        # Video generation
+    │   └── prompt.py       # LLM activities
+    ├── workflows/
+    │   ├── base.py         # WorkflowContext, run_activity, upload_output
+    │   └── generations/    # One workflow per generation type (auto-discovered)
+    ├── registry.py         # Auto-discovery functions
+    ├── schemas.py          # Shared Temporal schemas
+    ├── worker.py           # Worker entry point
+    └── client.py           # Client for starting workflows
+```
+
+## Commands
+
+```bash
+make start      # Start Temporal + worker
+make test       # Run tests
+make run        # Execute sample workflow
+make models     # List registered AI models
+make lint       # Lint code
+make format     # Format code
+```
+
+## Don'ts
+
+- ❌ Don't use `os.getenv()` - use `app_config`
+- ❌ Don't use dataclasses - use Pydantic `BaseModel`
+- ❌ Don't put multiple AI models in one file
+- ❌ Don't manually edit workflow registries - they auto-discover
+- ❌ Don't create FastAPI endpoints - this is a Temporal-only service
+- ❌ Don't add backwards compatibility shims or re-exports - refactor all usages instead
+- ❌ Don't create massive test files - one test class per module
+
+## Dos
+
+- ✅ Use `app_config` for all configuration
+- ✅ Use Pydantic `BaseModel` with `Field(...)` for all schemas
+- ✅ One AI model per file in `app/core/ai_models/{category}/`
+- ✅ One generation workflow per file in `app/temporal/workflows/generations/`
+- ✅ **Workflow inputs MUST inherit from `WorkflowInput`** (not BaseModel directly)
+- ✅ **Always call `self._ctx.start(input)`** to enable secret key validation
+- ✅ Use `async with ctx.step(...)` for workflow steps
+- ✅ Use `run_activity()` helper for activity execution
+- ✅ Use `upload_output()` for storage uploads
+- ✅ Use `with workflow.unsafe.imports_passed_through():` for activity imports in workflows
