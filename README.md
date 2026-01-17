@@ -56,7 +56,7 @@ For production deployment, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 Creates viral short-form content with an AI-generated person showing an emotion. Think TikTok/Reels style.
 
 <p align="center">
-  <video src="https://workflows.gptmarket.io/ruby/videos/2026/01/17/b7eb64ce2efa.mp4" width="300" controls></video>
+  <img src="docs/examples/ruby/b7eb64ce2efa.gif" width="280" alt="Ruby Example">
 </p>
 
 **Flow:** Generate person prompt → Generate face → Animate with video model → Slow motion → Text overlay → Media rewrite (optional)
