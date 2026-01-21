@@ -396,6 +396,36 @@ class UGCVideoReactionOutput(BaseModel):
 
 
 # =============================================================================
+# Sora Video Extraction Activity
+# =============================================================================
+
+
+@dataclass
+class SoraExtractionInput:
+    """Input for Sora video extraction activity.
+
+    Extracts MP4 from a Sora share link and downloads it to local storage.
+    """
+
+    share_url: str
+    """The Sora share URL (e.g., https://sora.chatgpt.com/share/xxxx)"""
+
+    temp_dir: str | None = None
+    """Optional temp directory for downloads (defaults to /tmp/sora_videos)"""
+
+
+@dataclass
+class SoraExtractionOutput:
+    """Output from Sora video extraction activity."""
+
+    local_path: str
+    """Local filesystem path to the downloaded MP4"""
+
+    file_size_bytes: int
+    """Size of the downloaded file in bytes"""
+
+
+# =============================================================================
 # Storage Activity
 # =============================================================================
 
