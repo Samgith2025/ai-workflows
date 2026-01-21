@@ -121,6 +121,95 @@ Watermarked:   MD5 = a8cbc7297657145b5f55628d61599a67 (4.26 MB) - DIFFERENT
 
 ---
 
+## Deep Dive: How dyysy.com Actually Works
+
+### Header Analysis
+
+When we request a video from dyysy.com, the response headers reveal exactly what's happening:
+
+```
+HTTP/2 200
+content-type: video/mp4
+server: cloudflare
+x-ms-blob-type: BlockBlob
+x-ms-version: 2024-08-04
+x-ms-server-encrypted: true
+content-disposition: inline; filename*=UTF-8''user-h3fdegp3k0KW6OQvgIEEOgeL_gen_01kff1rmere6arvtagxz3nv7am.mp4
+set-cookie: __cf_bm=...; domain=.videos.openai.com
+set-cookie: _cfuvid=...; domain=.videos.openai.com
+```
+
+### Key Findings
+
+1. **dyysy.com is a reverse proxy to OpenAI's Azure Blob Storage**
+   - The cookies are set with `domain=.videos.openai.com`
+   - This proves dyysy is proxying requests directly to OpenAI's video CDN
+   - The `x-ms-*` headers confirm Azure Blob Storage backend
+
+2. **They have authenticated Sora Pro access**
+   - They use authentication tokens that allow them to fetch the **unwatermarked `source` encoding**
+   - Public users only get the `source_wm` (watermarked) encoding
+   - Their proxy acts as a man-in-the-middle with valid credentials
+
+3. **The original filename is preserved**
+   - `content-disposition` header shows: `user-{user_id}_gen_{generation_id}.mp4`
+   - This confirms they're fetching from OpenAI's actual storage, not a copy
+
+4. **It's NOT just URL manipulation**
+   - You cannot simply change URL parameters to get the clean version
+   - OpenAI's server-side authorization checks authentication tokens
+   - Different files are served to authenticated Pro users vs public requests
+
+### The Actual Process
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────────┐     ┌──────────────────┐
+│   You       │────▶│ dyysy.com   │────▶│ OpenAI Sora API │────▶│ Azure Blob       │
+│             │     │ (proxy)     │     │ (authenticated) │     │ Storage          │
+└─────────────┘     └─────────────┘     └─────────────────┘     └──────────────────┘
+      │                   │                     │                        │
+      │ 1. Request        │ 2. Auth request     │ 3. Return source      │
+      │    video ID       │    with Sora Pro    │    blob URL           │
+      │                   │    credentials      │    (unwatermarked)    │
+      │                   │                     │                        │
+      │◀──────────────────│◀────────────────────│◀───────────────────────│
+      │ 4. Unwatermarked video served back to you                       │
+```
+
+### Why This Works for Brand New Private Videos
+
+1. You create a video in Sora (even if private/draft)
+2. OpenAI stores BOTH watermarked and unwatermarked versions in Azure Blob Storage
+3. You share the video ID with dyysy.com (via their proxy URL)
+4. dyysy makes an authenticated API call using their Sora Pro credentials
+5. OpenAI's API returns the unwatermarked `source` blob URL (because the request is authenticated)
+6. dyysy proxies the blob directly to you
+
+**The video doesn't need to be "known" or "cached" - dyysy makes live API calls on demand.**
+
+### Proof This Is NOT a Cache
+
+| Evidence | What It Proves |
+|----------|----------------|
+| Brand new video (5 mins old) worked instantly | Not pre-cached |
+| `age: 80` header (only 80 seconds old) | Freshly fetched |
+| Works for private/draft videos | Not scraped from public sources |
+| `domain=.videos.openai.com` in cookies | Direct proxy to OpenAI |
+| Azure Blob Storage headers (`x-ms-*`) | Accessing OpenAI's actual storage |
+
+### Can We Replicate This?
+
+To build your own version of dyysy.com, you would need:
+
+1. **A Sora Pro subscription** ($200/month) - for authenticated API access
+2. **Reverse engineer the auth flow** - how Sora Pro sessions authenticate to the API
+3. **Build a proxy server** - that makes authenticated requests on behalf of users
+4. **Handle the blob storage URLs** - parse and proxy the Azure blob responses
+
+The cost and complexity make this impractical for personal use. The dyysy.com/soravdl.com services have already done this work and are (currently) providing it for free.
+
+---
+
 ## How Third-Party Services Work
 
 ### soravdl.com
